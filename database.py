@@ -22,7 +22,8 @@ class Database:
             'users': {},
             'giveaways': {},
             'drafts': {},
-            'active_giveaways': {}  # Maps discussion_group_id -> giveaway_id
+            'active_giveaways': {},  # Maps discussion_group_id -> giveaway_id
+            'withdrawals': {}
         }
     
     def _save_data(self):
@@ -212,4 +213,41 @@ class Database:
             self.data['active_giveaways'] = {}
         if discussion_group in self.data['active_giveaways']:
             del self.data['active_giveaways'][discussion_group]
+            self._save_data()
+    
+    def add_withdrawal_request(self, user_id: int, amount: float, upi_id: str) -> str:
+        """Add a new withdrawal request"""
+        if 'withdrawals' not in self.data:
+            self.data['withdrawals'] = {}
+        
+        withdrawal_id = f"withdraw_{user_id}_{len(self.data['withdrawals'])}"
+        withdrawal_data = {
+            'withdrawal_id': withdrawal_id,
+            'user_id': user_id,
+            'amount': amount,
+            'upi_id': upi_id,
+            'status': 'pending',
+            'created_at': datetime.now().isoformat(),
+            'rejection_reason': None
+        }
+        
+        self.data['withdrawals'][withdrawal_id] = withdrawal_data
+        self._save_data()
+        return withdrawal_id
+    
+    def get_withdrawal_request(self, withdrawal_id: str) -> Optional[dict]:
+        """Get a withdrawal request by ID"""
+        if 'withdrawals' not in self.data:
+            self.data['withdrawals'] = {}
+        return self.data['withdrawals'].get(withdrawal_id)
+    
+    def update_withdrawal_status(self, withdrawal_id: str, status: str, rejection_reason: str = None):
+        """Update withdrawal request status"""
+        if 'withdrawals' not in self.data:
+            self.data['withdrawals'] = {}
+        
+        if withdrawal_id in self.data['withdrawals']:
+            self.data['withdrawals'][withdrawal_id]['status'] = status
+            if rejection_reason:
+                self.data['withdrawals'][withdrawal_id]['rejection_reason'] = rejection_reason
             self._save_data()

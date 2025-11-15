@@ -23,6 +23,7 @@ scheduler = AsyncIOScheduler()
 
 CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, AFTER_TIME = range(6)
 BROADCAST_MESSAGE = 0
+WITHDRAW_AMOUNT, WITHDRAW_UPI = range(2)
 
 def get_main_keyboard():
     keyboard = [
@@ -122,13 +123,127 @@ async def handle_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=get_main_keyboard()
     )
 
-async def handle_out(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_data = db.get_user(user.id)
+    balance = user_data.get('balance', 0.0)
+    
     await update.message.reply_text(
         f"💸 Withdraw Funds\n\n"
-        f"To withdraw funds from your balance, please contact {DEVELOPER_CONTACT}\n\n"
-        f"Minimum withdraw amount: ₹{MIN_AMOUNT}",
+        f"Your Balance: ₹{balance:.2f}\n"
+        f"Minimum withdraw amount: ₹{MIN_AMOUNT}\n\n"
+        f"Please enter the amount you want to withdraw:",
+        reply_markup=get_back_keyboard()
+    )
+    return WITHDRAW_AMOUNT
+
+async def receive_withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Withdrawal cancelled.",
+            reply_markup=get_main_keyboard()
+        )
+        return ConversationHandler.END
+    
+    try:
+        amount = float(text)
+        user = update.effective_user
+        user_data = db.get_user(user.id)
+        balance = user_data.get('balance', 0.0)
+        
+        if amount < MIN_AMOUNT:
+            await update.message.reply_text(
+                f"❌ Minimum withdrawal amount is ₹{MIN_AMOUNT}\n\n"
+                f"Please enter a valid amount:",
+                reply_markup=get_back_keyboard()
+            )
+            return WITHDRAW_AMOUNT
+        
+        if amount > balance:
+            await update.message.reply_text(
+                f"❌ Insufficient balance!\n\n"
+                f"Your balance: ₹{balance:.2f}\n"
+                f"Requested: ₹{amount:.2f}\n\n"
+                f"Please enter a valid amount:",
+                reply_markup=get_back_keyboard()
+            )
+            return WITHDRAW_AMOUNT
+        
+        context.user_data['withdraw_amount'] = amount
+        await update.message.reply_text(
+            f"✅ Amount: ₹{amount:.2f}\n\n"
+            f"Please enter your UPI ID:",
+            reply_markup=get_back_keyboard()
+        )
+        return WITHDRAW_UPI
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Please enter a valid number:",
+            reply_markup=get_back_keyboard()
+        )
+        return WITHDRAW_AMOUNT
+
+async def receive_withdraw_upi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Please enter the amount you want to withdraw:",
+            reply_markup=get_back_keyboard()
+        )
+        return WITHDRAW_AMOUNT
+    
+    upi_id = text
+    user = update.effective_user
+    amount = context.user_data.get('withdraw_amount', 0)
+    
+    # Create withdrawal request
+    withdrawal_id = db.add_withdrawal_request(user.id, amount, upi_id)
+    
+    # Deduct balance immediately
+    user_data = db.get_user(user.id)
+    new_balance = user_data.get('balance', 0) - amount
+    db.update_user_balance(user.id, new_balance)
+    
+    # Send request to admin
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ Done", callback_data=f"withdraw_done_{withdrawal_id}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"withdraw_reject_{withdrawal_id}")
+        ]
+    ]
+    
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_USER_ID,
+            text=f"💸 New Withdrawal Request\n\n"
+                 f"Request ID: #{withdrawal_id}\n"
+                 f"User: {user.first_name} (@{user.username or 'No username'})\n"
+                 f"User ID: {user.id}\n"
+                 f"Amount: ₹{amount:.2f}\n"
+                 f"UPI ID: {upi_id}\n"
+                 f"Status: Pending",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Failed to send withdrawal request to admin: {e}")
+    
+    await update.message.reply_text(
+        f"✅ Withdrawal request submitted!\n\n"
+        f"Amount: ₹{amount:.2f}\n"
+        f"UPI ID: {upi_id}\n"
+        f"Request ID: #{withdrawal_id}\n\n"
+        f"₹{amount:.2f} has been deducted from your balance.\n"
+        f"New balance: ₹{new_balance:.2f}\n\n"
+        f"Your request is being reviewed by the admin.\n"
+        f"You will be notified once it's processed.",
         reply_markup=get_main_keyboard()
     )
+    
+    context.user_data.clear()
+    return ConversationHandler.END
 
 async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
@@ -684,13 +799,26 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
         winner_id = winner.get('user_id')
         winner_username = winner.get('username', 'Unknown')
         
+        # Format winner display: use @username if available, otherwise use name
+        if winner_username.startswith('@'):
+            winner_display = winner_username
+        elif winner_username and winner_username != 'Unknown':
+            winner_display = f"@{winner_username}"
+        else:
+            # Try to get user info to show their name
+            try:
+                user_info = await context.bot.get_chat(winner_id)
+                winner_display = user_info.first_name
+            except:
+                winner_display = winner_username
+        
         db.set_giveaway_winner(giveaway_id, winner_id)
         
         await context.bot.send_message(
             chat_id=channel,
             text=f"🎉 Giveaway Result!\n\n"
                  f"Number: {total}\n"
-                 f"Winner: @{winner_username}\n\n"
+                 f"Winner: {winner_display}\n\n"
                  f"Winner, please click here to grab the prize:\n"
                  f"[Click Here](https://t.me/WeooGiveawayBot?start=prize{giveaway_id})",
             parse_mode='Markdown'
@@ -1069,6 +1197,113 @@ async def handle_close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await query.delete_message()
 
+async def handle_withdraw_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    withdrawal_id = query.data.replace("withdraw_done_", "")
+    withdrawal = db.get_withdrawal_request(withdrawal_id)
+    
+    if not withdrawal:
+        await query.edit_message_text("❌ Withdrawal request not found!")
+        return
+    
+    if withdrawal.get('status') != 'pending':
+        await query.edit_message_text(f"❌ This request has already been {withdrawal.get('status')}!")
+        return
+    
+    db.update_withdrawal_status(withdrawal_id, 'completed')
+    
+    user_id = withdrawal.get('user_id')
+    amount = withdrawal.get('amount')
+    
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"✅ Withdrawal Completed!\n\n"
+                 f"Request ID: #{withdrawal_id}\n"
+                 f"Amount: ₹{amount:.2f}\n"
+                 f"UPI ID: {withdrawal.get('upi_id')}\n\n"
+                 f"Your withdrawal has been processed successfully!"
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify user about withdrawal completion: {e}")
+    
+    await query.edit_message_text(
+        f"✅ Withdrawal request #{withdrawal_id} marked as completed!\n\n"
+        f"User has been notified.",
+        reply_markup=None
+    )
+
+async def handle_withdraw_reject(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer("Please send the rejection reason as a message.")
+    
+    withdrawal_id = query.data.replace("withdraw_reject_", "")
+    withdrawal = db.get_withdrawal_request(withdrawal_id)
+    
+    if not withdrawal:
+        await query.edit_message_text("❌ Withdrawal request not found!")
+        return
+    
+    if withdrawal.get('status') != 'pending':
+        await query.edit_message_text(f"❌ This request has already been {withdrawal.get('status')}!")
+        return
+    
+    context.user_data['rejecting_withdrawal'] = withdrawal_id
+    
+    await context.bot.send_message(
+        chat_id=ADMIN_USER_ID,
+        text=f"Please send the rejection reason for withdrawal #{withdrawal_id}:"
+    )
+
+async def handle_rejection_reason(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        return
+    
+    withdrawal_id = context.user_data.get('rejecting_withdrawal')
+    
+    if not withdrawal_id:
+        return
+    
+    reason = update.message.text
+    withdrawal = db.get_withdrawal_request(withdrawal_id)
+    
+    if not withdrawal:
+        await update.message.reply_text("❌ Withdrawal request not found!")
+        context.user_data.pop('rejecting_withdrawal', None)
+        return
+    
+    db.update_withdrawal_status(withdrawal_id, 'rejected', reason)
+    
+    user_id = withdrawal.get('user_id')
+    amount = withdrawal.get('amount')
+    
+    # Refund the amount
+    user_data = db.get_user(user_id)
+    new_balance = user_data.get('balance', 0) + amount
+    db.update_user_balance(user_id, new_balance)
+    
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"❌ Withdrawal Rejected\n\n"
+                 f"Request ID: #{withdrawal_id}\n"
+                 f"Amount: ₹{amount:.2f}\n\n"
+                 f"Reason: {reason}\n\n"
+                 f"₹{amount:.2f} has been refunded to your balance.\n"
+                 f"New balance: ₹{new_balance:.2f}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify user about withdrawal rejection: {e}")
+    
+    await update.message.reply_text(
+        f"✅ Withdrawal request #{withdrawal_id} rejected!\n\n"
+        f"User has been notified and amount refunded."
+    )
+    
+    context.user_data.pop('rejecting_withdrawal', None)
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
@@ -1083,8 +1318,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_balance(update, context)
     elif text == "Add":
         await handle_add(update, context)
-    elif text == "Out":
-        await handle_out(update, context)
     elif text == "Help":
         await handle_help(update, context)
     elif text == "Contact":
@@ -1133,6 +1366,15 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     
+    withdraw_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^Out$"), start_withdraw)],
+        states={
+            WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_withdraw_amount)],
+            WITHDRAW_UPI: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_withdraw_upi)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("panel", admin_panel))
     application.add_handler(CommandHandler("ban", ban_user))
@@ -1141,8 +1383,11 @@ def main():
     application.add_handler(CommandHandler("remove", remove_balance_admin))
     application.add_handler(CommandHandler("say", say_to_user))
     application.add_handler(broadcast_handler)
+    application.add_handler(withdraw_handler)
     application.add_handler(conv_handler)
     
+    application.add_handler(CallbackQueryHandler(handle_withdraw_done, pattern="^withdraw_done_"))
+    application.add_handler(CallbackQueryHandler(handle_withdraw_reject, pattern="^withdraw_reject_"))
     application.add_handler(CallbackQueryHandler(handle_draft_activate, pattern="^activate_draft_"))
     application.add_handler(CallbackQueryHandler(handle_draft_delete, pattern="^delete_draft_"))
     application.add_handler(CallbackQueryHandler(handle_giveaway_view, pattern="^view_giveaway_"))
@@ -1151,6 +1396,9 @@ def main():
     
     # Handle group messages for giveaway participation (must come before private chat handler)
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), handle_giveaway_participation))
+    
+    # Handle admin rejection reason (must come before general text handler)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.User(ADMIN_USER_ID), handle_rejection_reason))
     
     # Handle private chat messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_text))
