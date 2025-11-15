@@ -1,5 +1,5 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 import asyncio
 from database import Database
@@ -327,7 +327,10 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     if not update.message:
         return
     
-    # Check if message is from a discussion group with an active giveaway
+    # Only process messages from groups/supergroups
+    if update.message.chat.type not in ['group', 'supergroup']:
+        return
+    
     chat_id = str(update.message.chat.id)
     user = update.effective_user
     text = update.message.text
@@ -337,12 +340,21 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     
     # Find active giveaway for this discussion group
     active_giveaway = None
-    for giveaway in db.get_all_giveaways():
-        if giveaway.get('discussion_group') == chat_id and giveaway.get('status') == 'scheduled':
+    all_giveaways = db.get_all_giveaways()
+    
+    for giveaway in all_giveaways:
+        giveaway_discussion = giveaway.get('discussion_group')
+        giveaway_status = giveaway.get('status')
+        
+        logger.info(f"Checking giveaway {giveaway.get('giveaway_id')}: discussion={giveaway_discussion}, status={giveaway_status}, current_chat={chat_id}")
+        
+        if giveaway_discussion == chat_id and giveaway_status == 'scheduled':
             active_giveaway = giveaway
+            logger.info(f"Found active giveaway: {giveaway.get('giveaway_id')}")
             break
     
     if not active_giveaway:
+        logger.info(f"No active giveaway found for chat {chat_id}")
         return
     
     try:
@@ -360,11 +372,7 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
             if user_participant:
                 # User already participated - update their number
                 db.update_participant(active_giveaway.get('giveaway_id'), user.id, number)
-                try:
-                    await update.message.set_reaction("✅")
-                    logger.info(f"User {user.id} updated their number to {number}")
-                except Exception as e:
-                    logger.error(f"Failed to react to updated participation: {e}")
+                logger.info(f"User {user.id} (@{user.username}) updated their number to {number}")
             else:
                 # New participant
                 db.add_participant(
@@ -373,11 +381,17 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
                     user.username or user.first_name,
                     number
                 )
-                try:
-                    await update.message.set_reaction("✅")
-                    logger.info(f"User {user.id} participated with number {number}")
-                except Exception as e:
-                    logger.error(f"Failed to react to participation: {e}")
+                logger.info(f"User {user.id} (@{user.username}) participated with number {number}")
+            
+            # Try to react with thumbs up emoji (don't use ✅ as it causes parsing issues)
+            try:
+                from telegram import ReactionTypeEmoji
+                await update.message.set_reaction(
+                    reaction=[ReactionTypeEmoji(emoji="👍")],
+                    is_big=False
+                )
+            except Exception as e:
+                logger.info(f"Could not set reaction (this is normal if reactions aren't supported): {e}")
         else:
             # Invalid number - send error
             try:
@@ -1131,8 +1145,11 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_giveaway_cancel, pattern="^cancel_giveaway_"))
     application.add_handler(CallbackQueryHandler(handle_close_menu, pattern="^close_menu$"))
     
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_giveaway_participation))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # Handle group messages for giveaway participation (must come before private chat handler)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), handle_giveaway_participation))
+    
+    # Handle private chat messages
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_text))
     
     logger.info("Bot started successfully!")
     
