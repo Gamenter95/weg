@@ -1,6 +1,7 @@
 import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler, CallbackQueryHandler
+import asyncio
 from database import Database
 from datetime import datetime, timedelta
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -15,11 +16,13 @@ BOT_TOKEN = "8480692956:AAHzyBn2PYOG8EI2NEsqg4a8WMORgj3LT-M"
 CHANNEL_USERNAME = "@WeooBots"
 DEVELOPER_CONTACT = "@Weoo_Weox"
 MIN_AMOUNT = 5
+ADMIN_USER_ID = 6186511950
 
 db = Database()
 scheduler = AsyncIOScheduler()
 
 CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, SEND_TIME, AFTER_TIME = range(7)
+BROADCAST_MESSAGE = 0
 
 def get_main_keyboard():
     keyboard = [
@@ -59,6 +62,17 @@ def get_draft_set_keyboard():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_data = db.get_user(user.id)
+    
+    if db.is_user_banned(user.id):
+        await update.message.reply_text(
+            "⛔ You have been banned from using this bot.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+    
+    if context.args:
+        await handle_prize_claim(update, context)
+        return
     
     try:
         member = await context.bot.get_chat_member(CHANNEL_USERNAME, user.id)
@@ -166,8 +180,7 @@ async def start_create_giveaway(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         "🎁 Create Giveaway\n\n"
         "Please send the channel username or ID where you want to create the giveaway.\n"
-        "Make sure I'm added as an admin in that channel!\n\n"
-        "You can also save this for later by typing 'Save for later'",
+        "Make sure I'm added as an admin in that channel!",
         reply_markup=get_back_keyboard()
     )
     return CHANNEL
@@ -181,15 +194,6 @@ async def receive_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_main_keyboard()
         )
         return ConversationHandler.END
-    
-    if text.lower() == "save for later":
-        await update.message.reply_text(
-            "You can provide the channel later. For now, let's continue...\n\n"
-            "Select giveaway type:",
-            reply_markup=get_giveaway_type_keyboard()
-        )
-        context.user_data['channel'] = None
-        return GIVEAWAY_TYPE
     
     context.user_data['channel'] = text
     await update.message.reply_text(
@@ -271,6 +275,52 @@ async def receive_dice_count(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def receive_prize_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
+
+
+async def handle_giveaway_participation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message.reply_to_message:
+        return
+    
+    replied_message_id = update.message.reply_to_message.message_id
+    user = update.effective_user
+    text = update.message.text
+    
+    active_giveaway = None
+    for giveaway in db.get_all_giveaways():
+        if giveaway.get('message_id') == replied_message_id and giveaway.get('status') == 'scheduled':
+            active_giveaway = giveaway
+            break
+    
+    if not active_giveaway:
+        return
+    
+    try:
+        number = int(text)
+        dice_count = active_giveaway.get('dice_count', 1)
+        min_num = dice_count
+        max_num = dice_count * 6
+        
+        if min_num <= number <= max_num:
+            db.add_participant(
+                active_giveaway.get('giveaway_id'),
+                user.id,
+                user.username or user.first_name,
+                number
+            )
+        else:
+            error_msg = await update.message.reply_text(
+                f"Please choose the number between {min_num}-{max_num}"
+            )
+            await asyncio.sleep(5)
+            try:
+                await update.message.delete()
+                await error_msg.delete()
+            except Exception:
+                pass
+    except ValueError:
+        pass
+
+
     if text == "Back":
         await update.message.reply_text(
             "Select how many dices you want (1-10):",
@@ -338,6 +388,343 @@ async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_back_keyboard()
         )
         return SEND_TIME
+
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    all_users = db.get_all_users()
+    all_giveaways = db.get_all_giveaways()
+    active_giveaways = [g for g in all_giveaways if g.get('status') == 'scheduled']
+    completed_giveaways = [g for g in all_giveaways if g.get('status') == 'completed']
+    
+    total_balance = sum(u.get('balance', 0) for u in all_users.values())
+    
+    panel_text = (
+        "🎛️ Admin Panel\n\n"
+        f"👥 Total Users: {len(all_users)}\n"
+        f"🎁 Total Giveaways: {len(all_giveaways)}\n"
+        f"⏳ Active Giveaways: {len(active_giveaways)}\n"
+        f"✅ Completed Giveaways: {len(completed_giveaways)}\n"
+        f"💰 Total Balance in System: ₹{total_balance:.2f}\n\n"
+        "Available Commands:\n"
+        "/ban <user_id> - Ban a user\n"
+        "/unban <user_id> - Unban a user\n"
+        "/add <user_id> <amount> - Add balance\n"
+        "/remove <user_id> <amount> - Remove balance\n"
+        "/say <user_id> <message> - Send message to user\n"
+        "/broadcast - Broadcast message to all users"
+    )
+    
+    await update.message.reply_text(panel_text)
+
+async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /ban <user_id>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        db.ban_user(user_id)
+        await update.message.reply_text(f"✅ User {user_id} has been banned.")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+
+async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    if len(context.args) < 1:
+        await update.message.reply_text("Usage: /unban <user_id>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        db.unban_user(user_id)
+        await update.message.reply_text(f"✅ User {user_id} has been unbanned.")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID.")
+
+async def add_balance_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /add <user_id> <amount>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        amount = float(context.args[1])
+        user_data = db.get_user(user_id)
+        new_balance = user_data.get('balance', 0) + amount
+        db.update_user_balance(user_id, new_balance)
+        await update.message.reply_text(f"✅ Added ₹{amount:.2f} to user {user_id}. New balance: ₹{new_balance:.2f}")
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Invalid user ID or amount.")
+
+async def remove_balance_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /remove <user_id> <amount>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        amount = float(context.args[1])
+        user_data = db.get_user(user_id)
+        new_balance = max(0, user_data.get('balance', 0) - amount)
+        db.update_user_balance(user_id, new_balance)
+        await update.message.reply_text(f"✅ Removed ₹{amount:.2f} from user {user_id}. New balance: ₹{new_balance:.2f}")
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Invalid user ID or amount.")
+
+async def say_to_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return
+    
+    if len(context.args) < 2:
+        await update.message.reply_text("Usage: /say <user_id> <message>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        message = ' '.join(context.args[1:])
+        await context.bot.send_message(chat_id=user_id, text=f"📢 Message from Admin:\n\n{message}")
+        await update.message.reply_text(f"✅ Message sent to user {user_id}.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Failed to send message: {str(e)}")
+
+async def start_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_USER_ID:
+        await update.message.reply_text("⛔ You don't have permission to use this command.")
+        return ConversationHandler.END
+    
+    await update.message.reply_text(
+        "📢 Broadcast Message\n\n"
+        "Please send the message you want to broadcast to all users:",
+        reply_markup=get_back_keyboard()
+    )
+    return BROADCAST_MESSAGE
+
+async def receive_broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text == "Back":
+        await update.message.reply_text("Broadcast cancelled.", reply_markup=get_main_keyboard())
+        return ConversationHandler.END
+    
+    message = update.message.text
+    all_users = db.get_all_users()
+    
+    success_count = 0
+    fail_count = 0
+    
+    await update.message.reply_text(f"📤 Broadcasting to {len(all_users)} users...")
+    
+    for user_id in all_users.keys():
+        try:
+            await context.bot.send_message(
+                chat_id=int(user_id),
+                text=f"📢 Broadcast Message:\n\n{message}"
+            )
+            success_count += 1
+        except Exception:
+            fail_count += 1
+    
+    await update.message.reply_text(
+        f"✅ Broadcast completed!\n\n"
+        f"✔️ Sent: {success_count}\n"
+        f"❌ Failed: {fail_count}",
+        reply_markup=get_main_keyboard()
+    )
+    return ConversationHandler.END
+
+async def handle_prize_claim(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    args = context.args
+    
+    if not args or not args[0].startswith('prize'):
+        return
+    
+    giveaway_id = args[0].replace('prize', '')
+    giveaway = db.get_giveaway(giveaway_id)
+    
+    if not giveaway:
+        await update.message.reply_text("❌ Invalid giveaway link.")
+        return
+    
+    winner_id = giveaway.get('winner_id')
+    
+    if not winner_id:
+        await update.message.reply_text("❌ This giveaway hasn't been completed yet.")
+        return
+    
+    if user.id != winner_id:
+        await update.message.reply_text("❌ You are not the winner of this giveaway!")
+        return
+    
+    if giveaway.get('prize_claimed'):
+        await update.message.reply_text("❌ Prize has already been claimed!")
+        return
+    
+    prize_amount = giveaway.get('prize_amount', 0)
+    user_data = db.get_user(user.id)
+    new_balance = user_data.get('balance', 0) + prize_amount
+    
+    db.update_user_balance(user.id, new_balance)
+    db.mark_prize_claimed(giveaway_id)
+    
+    await update.message.reply_text(
+        f"🎉 Congratulations!\n\n"
+        f"You won ₹{prize_amount:.2f}!\n"
+        f"Your new balance: ₹{new_balance:.2f}",
+        reply_markup=get_main_keyboard()
+    )
+
+async def run_scheduled_giveaway(context: ContextTypes.DEFAULT_TYPE):
+    giveaway_id = context.job.data
+    giveaway = db.get_giveaway(giveaway_id)
+    
+    if not giveaway:
+        return
+    
+    channel = giveaway.get('channel')
+    discussion_group = giveaway.get('discussion_group')
+    dice_count = giveaway.get('dice_count', 1)
+    after_time = giveaway.get('after_time', 5)
+    
+    min_number = dice_count
+    max_number = dice_count * 6
+    
+    try:
+        message = await context.bot.send_message(
+            chat_id=channel,
+            text=f"🎲 Dice Giveaway!\n\nPlease send a number between {min_number}-{max_number} ✅\nComment Down ❤️"
+        )
+        
+        db.update_giveaway_message(giveaway_id, message.message_id)
+        
+        context.job_queue.run_once(
+            start_giveaway_rolling,
+            when=after_time * 60,
+            data=giveaway_id,
+            name=f"roll_{giveaway_id}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to send giveaway message: {e}")
+
+async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
+    giveaway_id = context.job.data
+    giveaway = db.get_giveaway(giveaway_id)
+    
+    if not giveaway:
+        return
+    
+    channel = giveaway.get('channel')
+    dice_count = giveaway.get('dice_count', 1)
+    prize_amount = giveaway.get('prize_amount', 0)
+    
+    total = 0
+    
+    for i in range(dice_count):
+        dice_msg = await context.bot.send_dice(chat_id=channel, emoji="🎲")
+        total += dice_msg.dice.value
+        await asyncio.sleep(3)
+    
+    participants = db.get_giveaway_participants(giveaway_id)
+    winner = None
+    
+    for participant in participants:
+        if participant.get('number') == total:
+            winner = participant
+            break
+    
+    if winner:
+        winner_id = winner.get('user_id')
+        winner_username = winner.get('username', 'Unknown')
+        
+        db.set_giveaway_winner(giveaway_id, winner_id)
+        
+        await context.bot.send_message(
+            chat_id=channel,
+            text=f"🎉 Giveaway Result!\n\n"
+                 f"Number: {total}\n"
+                 f"Winner: @{winner_username}\n\n"
+                 f"Winner, please click here to grab the prize:\n"
+                 f"[Click Here](https://t.me/WeooGiveawayBot?start=prize{giveaway_id})",
+            parse_mode='Markdown'
+        )
+        
+        db.update_giveaway_status(giveaway_id, 'completed')
+    else:
+        keyboard = [
+            [InlineKeyboardButton("Yes", callback_data=f"redo_yes_{giveaway_id}"),
+             InlineKeyboardButton("No", callback_data=f"redo_no_{giveaway_id}")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await context.bot.send_message(
+            chat_id=channel,
+            text=f"😔 Giveaway Result\n\n"
+                 f"Number Got: {total}\n"
+                 f"Winner: No one\n"
+                 f"Reason: No one chose the correct number\n\n"
+                 f"Want to redo?",
+            reply_markup=reply_markup
+        )
+
+async def handle_redo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data.startswith("redo_yes_"):
+        giveaway_id = data.replace("redo_yes_", "")
+        giveaway = db.get_giveaway(giveaway_id)
+        
+        if giveaway:
+            db.clear_giveaway_participants(giveaway_id)
+            after_time = giveaway.get('after_time', 5)
+            
+            context.job_queue.run_once(
+                start_giveaway_rolling,
+                when=after_time * 60,
+                data=giveaway_id,
+                name=f"roll_{giveaway_id}"
+            )
+            
+            await query.edit_message_text("🔄 Giveaway will be redone! Good luck! 🍀")
+    
+    elif data.startswith("redo_no_"):
+        giveaway_id = data.replace("redo_no_", "")
+        giveaway = db.get_giveaway(giveaway_id)
+        
+        if giveaway:
+            creator_id = giveaway.get('user_id')
+            prize_amount = giveaway.get('prize_amount', 0)
+            
+            user_data = db.get_user(creator_id)
+            new_balance = user_data.get('balance', 0) + prize_amount
+            db.update_user_balance(creator_id, new_balance)
+            
+            db.update_giveaway_status(giveaway_id, 'cancelled')
+            
+            await query.edit_message_text("❌ Giveaway cancelled. Prize amount refunded to creator.")
+
+
 
 async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -568,8 +955,25 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
     
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", start_broadcast)],
+        states={
+            BROADCAST_MESSAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_broadcast_message)],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("panel", admin_panel))
+    application.add_handler(CommandHandler("ban", ban_user))
+    application.add_handler(CommandHandler("unban", unban_user))
+    application.add_handler(CommandHandler("add", add_balance_admin))
+    application.add_handler(CommandHandler("remove", remove_balance_admin))
+    application.add_handler(CommandHandler("say", say_to_user))
+    application.add_handler(broadcast_handler)
     application.add_handler(conv_handler)
+    application.add_handler(CallbackQueryHandler(handle_redo_callback))
+    application.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_giveaway_participation))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     logger.info("Bot started successfully!")

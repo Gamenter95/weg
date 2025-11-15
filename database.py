@@ -36,10 +36,28 @@ class Database:
                 'balance': 0.0,
                 'giveaways': [],
                 'drafts': [],
-                'joined_channel': False
+                'joined_channel': False,
+                'banned': False
             }
             self._save_data()
         return self.data['users'][user_id_str]
+    
+    def get_all_users(self) -> dict:
+        return self.data['users']
+    
+    def ban_user(self, user_id: int):
+        user = self.get_user(user_id)
+        user['banned'] = True
+        self._save_data()
+    
+    def unban_user(self, user_id: int):
+        user = self.get_user(user_id)
+        user['banned'] = False
+        self._save_data()
+    
+    def is_user_banned(self, user_id: int) -> bool:
+        user = self.get_user(user_id)
+        return user.get('banned', False)
     
     def update_user_balance(self, user_id: int, amount: float):
         user = self.get_user(user_id)
@@ -116,4 +134,46 @@ class Database:
             if giveaway_id in user['giveaways']:
                 user['giveaways'].remove(giveaway_id)
             del self.data['giveaways'][giveaway_id]
+            self._save_data()
+    
+    def get_all_giveaways(self) -> List[dict]:
+        return list(self.data['giveaways'].values())
+    
+    def update_giveaway_message(self, giveaway_id: str, message_id: int):
+        if giveaway_id in self.data['giveaways']:
+            self.data['giveaways'][giveaway_id]['message_id'] = message_id
+            self.data['giveaways'][giveaway_id]['participants'] = []
+            self._save_data()
+    
+    def add_participant(self, giveaway_id: str, user_id: int, username: str, number: int):
+        if giveaway_id in self.data['giveaways']:
+            if 'participants' not in self.data['giveaways'][giveaway_id]:
+                self.data['giveaways'][giveaway_id]['participants'] = []
+            
+            self.data['giveaways'][giveaway_id]['participants'].append({
+                'user_id': user_id,
+                'username': username,
+                'number': number
+            })
+            self._save_data()
+    
+    def get_giveaway_participants(self, giveaway_id: str) -> List[dict]:
+        if giveaway_id in self.data['giveaways']:
+            return self.data['giveaways'][giveaway_id].get('participants', [])
+        return []
+    
+    def clear_giveaway_participants(self, giveaway_id: str):
+        if giveaway_id in self.data['giveaways']:
+            self.data['giveaways'][giveaway_id]['participants'] = []
+            self._save_data()
+    
+    def set_giveaway_winner(self, giveaway_id: str, winner_id: int):
+        if giveaway_id in self.data['giveaways']:
+            self.data['giveaways'][giveaway_id]['winner_id'] = winner_id
+            self.data['giveaways'][giveaway_id]['prize_claimed'] = False
+            self._save_data()
+    
+    def mark_prize_claimed(self, giveaway_id: str):
+        if giveaway_id in self.data['giveaways']:
+            self.data['giveaways'][giveaway_id]['prize_claimed'] = True
             self._save_data()
