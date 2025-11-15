@@ -733,6 +733,9 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return SEND_TIME
     
+    if text in ["Draft", "Set"]:
+        return await handle_draft_set_choice(update, context)
+    
     try:
         after_minutes = int(text)
         if after_minutes <= 0:
@@ -773,6 +776,7 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
             reply_markup=get_draft_set_keyboard()
         )
         
+        context.user_data['waiting_for_draft_set'] = True
         return AFTER_TIME
     except ValueError:
         await update.message.reply_text(
@@ -945,10 +949,7 @@ def main():
             DICE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_dice_count)],
             PRIZE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prize_amount)],
             SEND_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_send_time)],
-            AFTER_TIME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time),
-                MessageHandler(filters.Regex("^(Draft|Set|Back)$"), handle_draft_set_choice)
-            ],
+            AFTER_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
