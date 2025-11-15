@@ -308,16 +308,21 @@ async def receive_prize_amount(update: Update, context: ContextTypes.DEFAULT_TYP
         return PRIZE_AMOUNT
 
 async def handle_giveaway_participation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.reply_to_message:
+    if not update.message:
         return
     
-    replied_message_id = update.message.reply_to_message.message_id
+    # Check if message is from a discussion group with an active giveaway
+    chat_id = str(update.message.chat.id)
     user = update.effective_user
     text = update.message.text
     
+    if not text:
+        return
+    
+    # Find active giveaway for this discussion group
     active_giveaway = None
     for giveaway in db.get_all_giveaways():
-        if giveaway.get('message_id') == replied_message_id and giveaway.get('status') == 'scheduled':
+        if giveaway.get('discussion_group') == chat_id and giveaway.get('status') == 'scheduled':
             active_giveaway = giveaway
             break
     
@@ -331,19 +336,32 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
         max_num = dice_count * 6
         
         if min_num <= number <= max_num:
-            db.add_participant(
-                active_giveaway.get('giveaway_id'),
-                user.id,
-                user.username or user.first_name,
-                number
-            )
+            # Check if user already participated
+            participants = db.get_giveaway_participants(active_giveaway.get('giveaway_id'))
+            already_participated = any(p.get('user_id') == user.id for p in participants)
+            
+            if not already_participated:
+                db.add_participant(
+                    active_giveaway.get('giveaway_id'),
+                    user.id,
+                    user.username or user.first_name,
+                    number
+                )
+            else:
+                error_msg = await update.message.reply_text(
+                    "You have already participated!"
+                )
+                await asyncio.sleep(5)
+                try:
+                    await error_msg.delete()
+                except Exception:
+                    pass
         else:
             error_msg = await update.message.reply_text(
-                f"Please choose the number between {min_num}-{max_num}"
+                f"Please choose a number between {min_num}-{max_num}"
             )
             await asyncio.sleep(5)
             try:
-                await update.message.delete()
                 await error_msg.delete()
             except Exception:
                 pass
@@ -633,73 +651,24 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
         
         db.update_giveaway_status(giveaway_id, 'completed')
     else:
-        # Send result to channel
+        # No winner - refund creator and mark as completed
+        creator_id = giveaway.get('user_id')
+        prize_amount = giveaway.get('prize_amount', 0)
+        
+        user_data = db.get_user(creator_id)
+        new_balance = user_data.get('balance', 0) + prize_amount
+        db.update_user_balance(creator_id, new_balance)
+        
         await context.bot.send_message(
             chat_id=channel,
             text=f"😔 Giveaway Result\n\n"
-                 f"Number Got: {total}\n"
+                 f"Number: {total}\n"
                  f"Winner: No one\n"
-                 f"Reason: No one chose the correct number"
+                 f"Reason: No one chose the correct number\n\n"
+                 f"Prize amount refunded to creator."
         )
         
-        # Ask creator in PM if they want to redo
-        creator_id = giveaway.get('user_id')
-        keyboard = [
-            [InlineKeyboardButton("Yes", callback_data=f"redo_yes_{giveaway_id}"),
-             InlineKeyboardButton("No", callback_data=f"redo_no_{giveaway_id}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        try:
-            await context.bot.send_message(
-                chat_id=creator_id,
-                text=f"😔 Your giveaway had no winner!\n\n"
-                     f"Number: {total}\n"
-                     f"Reason: No one chose the correct number\n\n"
-                     f"Would you like to redo the giveaway?",
-                reply_markup=reply_markup
-            )
-        except Exception as e:
-            logger.error(f"Failed to send redo prompt to creator: {e}")
-
-async def handle_redo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    data = query.data
-    
-    if data.startswith("redo_yes_"):
-        giveaway_id = data.replace("redo_yes_", "")
-        giveaway = db.get_giveaway(giveaway_id)
-        
-        if giveaway:
-            db.clear_giveaway_participants(giveaway_id)
-            after_time = giveaway.get('after_time', 5)
-            
-            context.job_queue.run_once(
-                start_giveaway_rolling,
-                when=after_time * 60,
-                data=giveaway_id,
-                name=f"roll_{giveaway_id}"
-            )
-            
-            await query.edit_message_text("🔄 Giveaway will be redone! Good luck! 🍀")
-    
-    elif data.startswith("redo_no_"):
-        giveaway_id = data.replace("redo_no_", "")
-        giveaway = db.get_giveaway(giveaway_id)
-        
-        if giveaway:
-            creator_id = giveaway.get('user_id')
-            prize_amount = giveaway.get('prize_amount', 0)
-            
-            user_data = db.get_user(creator_id)
-            new_balance = user_data.get('balance', 0) + prize_amount
-            db.update_user_balance(creator_id, new_balance)
-            
-            db.update_giveaway_status(giveaway_id, 'cancelled')
-            
-            await query.edit_message_text("❌ Giveaway cancelled. Prize amount refunded to creator.")
+        db.update_giveaway_status(giveaway_id, 'completed')
 
 
 
@@ -959,8 +928,7 @@ def main():
     application.add_handler(CommandHandler("say", say_to_user))
     application.add_handler(broadcast_handler)
     application.add_handler(conv_handler)
-    application.add_handler(CallbackQueryHandler(handle_redo_callback))
-    application.add_handler(MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_giveaway_participation))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_giveaway_participation))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     logger.info("Bot started successfully!")
