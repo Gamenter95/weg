@@ -89,6 +89,9 @@ class Database:
                 drafts.append(self.data['drafts'][draft_id])
         return drafts
     
+    def get_draft(self, draft_id: str) -> Optional[dict]:
+        return self.data['drafts'].get(draft_id)
+    
     def delete_draft(self, draft_id: str):
         if draft_id in self.data['drafts']:
             user_id = self.data['drafts'][draft_id]['user_id']
