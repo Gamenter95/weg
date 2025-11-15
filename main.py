@@ -352,29 +352,32 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
         max_num = dice_count * 6
         
         if min_num <= number <= max_num:
-            # Check if user already participated
             participants = db.get_giveaway_participants(active_giveaway.get('giveaway_id'))
-            already_participated = any(p.get('user_id') == user.id for p in participants)
             
-            if not already_participated:
+            # Check if user already participated
+            user_participant = next((p for p in participants if p.get('user_id') == user.id), None)
+            
+            if user_participant:
+                # User already participated - update their number
+                db.update_participant(active_giveaway.get('giveaway_id'), user.id, number)
+                try:
+                    await update.message.set_reaction("✅")
+                    logger.info(f"User {user.id} updated their number to {number}")
+                except Exception as e:
+                    logger.error(f"Failed to react to updated participation: {e}")
+            else:
+                # New participant
                 db.add_participant(
                     active_giveaway.get('giveaway_id'),
                     user.id,
                     user.username or user.first_name,
                     number
                 )
-                # Don't delete valid participation messages
-                logger.info(f"User {user.id} participated with number {number}")
-            else:
-                # Only send error without deleting
                 try:
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=f"@{user.username or user.first_name}, you have already participated!",
-                        message_thread_id=update.message.message_thread_id
-                    )
+                    await update.message.set_reaction("✅")
+                    logger.info(f"User {user.id} participated with number {number}")
                 except Exception as e:
-                    logger.error(f"Failed to send already participated message: {e}")
+                    logger.error(f"Failed to react to participation: {e}")
         else:
             # Invalid number - send error
             try:

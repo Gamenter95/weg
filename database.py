@@ -105,6 +105,7 @@ class Database:
         giveaway_data['user_id'] = user_id
         giveaway_data['created_at'] = datetime.now().isoformat()
         giveaway_data['status'] = 'scheduled'
+        giveaway_data['participants'] = []
         
         self.data['giveaways'][giveaway_id] = giveaway_data
         user['giveaways'].append(giveaway_id)
@@ -142,7 +143,8 @@ class Database:
     def update_giveaway_message(self, giveaway_id: str, message_id: int):
         if giveaway_id in self.data['giveaways']:
             self.data['giveaways'][giveaway_id]['message_id'] = message_id
-            self.data['giveaways'][giveaway_id]['participants'] = []
+            if 'participants' not in self.data['giveaways'][giveaway_id]:
+                self.data['giveaways'][giveaway_id]['participants'] = []
             self._save_data()
     
     def add_participant(self, giveaway_id: str, user_id: int, username: str, number: int):
@@ -156,6 +158,15 @@ class Database:
                 'number': number
             })
             self._save_data()
+    
+    def update_participant(self, giveaway_id: str, user_id: int, new_number: int):
+        if giveaway_id in self.data['giveaways']:
+            participants = self.data['giveaways'][giveaway_id].get('participants', [])
+            for participant in participants:
+                if participant['user_id'] == user_id:
+                    participant['number'] = new_number
+                    self._save_data()
+                    return
     
     def get_giveaway_participants(self, giveaway_id: str) -> List[dict]:
         if giveaway_id in self.data['giveaways']:
