@@ -956,8 +956,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
     
-    scheduler.start()
-    
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Create Giveaway$"), start_create_giveaway)],
         states={
@@ -995,6 +993,12 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     logger.info("Bot started successfully!")
+    
+    async def post_init(application):
+        scheduler.start()
+        logger.info("Scheduler started successfully!")
+    
+    application.post_init = post_init
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
