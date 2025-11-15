@@ -829,11 +829,27 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
             new_balance = balance - prize_amount
             db.update_user_balance(user.id, new_balance)
             
+            send_time_str = context.user_data.get('send_time')
+            hour, minute = map(int, send_time_str.split(':'))
+            
+            now = datetime.now()
+            scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            
+            if scheduled_time <= now:
+                scheduled_time += timedelta(days=1)
+            
+            context.application.job_queue.run_once(
+                run_scheduled_giveaway,
+                when=scheduled_time,
+                data=giveaway_id,
+                name=f"giveaway_{giveaway_id}"
+            )
+            
             await update.message.reply_text(
                 f"✅ Giveaway created successfully!\n\n"
                 f"₹{prize_amount:.2f} has been deducted from your balance.\n"
                 f"New balance: ₹{new_balance:.2f}\n\n"
-                f"Your giveaway will be sent at {context.user_data.get('send_time')}",
+                f"Your giveaway will be sent at {send_time_str}",
                 reply_markup=get_main_keyboard()
             )
             context.user_data.clear()
@@ -939,6 +955,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    scheduler.start()
     
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Create Giveaway$"), start_create_giveaway)],
