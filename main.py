@@ -275,7 +275,37 @@ async def receive_dice_count(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def receive_prize_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
-
+    if text == "Back":
+        await update.message.reply_text(
+            "Select how many dices you want (1-10):",
+            reply_markup=get_dice_count_keyboard()
+        )
+        return DICE_COUNT
+    
+    try:
+        amount = float(text)
+        if amount <= 0:
+            await update.message.reply_text(
+                "Prize amount must be greater than 0. Please try again:",
+                reply_markup=get_back_keyboard()
+            )
+            return PRIZE_AMOUNT
+        
+        context.user_data['prize_amount'] = amount
+        await update.message.reply_text(
+            f"Prize amount: ₹{amount:.2f}\n\n"
+            "When should the giveaway message be sent?\n"
+            "Please enter the time in format: HH:MM (24-hour format)\n"
+            "Example: 12:00 or 23:30",
+            reply_markup=get_back_keyboard()
+        )
+        return SEND_TIME
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter a valid number for the prize amount:",
+            reply_markup=get_back_keyboard()
+        )
+        return PRIZE_AMOUNT
 
 async def handle_giveaway_participation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message.reply_to_message:
@@ -321,39 +351,7 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
         pass
 
 
-    if text == "Back":
-        await update.message.reply_text(
-            "Select how many dices you want (1-10):",
-            reply_markup=get_dice_count_keyboard()
-        )
-        return DICE_COUNT
-    
-    try:
-        amount = float(text)
-        if amount <= 0:
-            await update.message.reply_text(
-                "Prize amount must be greater than 0. Please try again:",
-                reply_markup=get_back_keyboard()
-            )
-            return PRIZE_AMOUNT
-        
-        context.user_data['prize_amount'] = amount
-        await update.message.reply_text(
-            f"Prize amount: ₹{amount:.2f}\n\n"
-            "When should the giveaway message be sent?\n"
-            "Please enter the time in format: HH:MM (24-hour format)\n"
-            "Example: 12:00 or 23:30",
-            reply_markup=get_back_keyboard()
-        )
-        return SEND_TIME
-    except ValueError:
-        await update.message.reply_text(
-            "Please enter a valid number for the prize amount:",
-            reply_markup=get_back_keyboard()
-        )
-        return PRIZE_AMOUNT
-
-async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
     if text == "Back":
@@ -762,10 +760,6 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         if balance >= prize_amount:
             summary += "\n✅ You have sufficient balance!\n\nWhat would you like to do?"
-            await update.message.reply_text(
-                summary,
-                reply_markup=get_draft_set_keyboard()
-            )
         else:
             summary += (
                 f"\n❌ Insufficient balance!\n"
@@ -774,12 +768,13 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"Please save as draft and add funds to your balance.\n"
                 f"Contact {DEVELOPER_CONTACT} to add funds."
             )
-            await update.message.reply_text(
-                summary,
-                reply_markup=get_draft_set_keyboard()
-            )
         
-        return ConversationHandler.END
+        await update.message.reply_text(
+            summary,
+            reply_markup=get_draft_set_keyboard()
+        )
+        
+        return AFTER_TIME
     except ValueError:
         await update.message.reply_text(
             "Please enter a valid number of minutes:",
@@ -809,6 +804,7 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=get_main_keyboard()
         )
         context.user_data.clear()
+        return ConversationHandler.END
     
     elif text == "Set":
         user_data = db.get_user(user.id)
@@ -838,19 +834,21 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
                 reply_markup=get_main_keyboard()
             )
             context.user_data.clear()
+            return ConversationHandler.END
         else:
             await update.message.reply_text(
                 "❌ Insufficient balance! Please save as draft and add funds first.",
                 reply_markup=get_main_keyboard()
             )
             context.user_data.clear()
+            return ConversationHandler.END
     
     elif text == "Back":
         await update.message.reply_text(
-            "Giveaway creation cancelled.",
-            reply_markup=get_main_keyboard()
+            "Please enter time in minutes for when the giveaway should start after being sent:",
+            reply_markup=get_back_keyboard()
         )
-        context.user_data.clear()
+        return AFTER_TIME
 
 async def handle_my_giveaways(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -921,8 +919,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_my_giveaways(update, context)
     elif text == "Drafts":
         await handle_drafts(update, context)
-    elif text in ["Draft", "Set", "Back"]:
-        await handle_draft_set_choice(update, context)
     else:
         await update.message.reply_text(
             "🚧 Coming soon...\n\n"
@@ -950,9 +946,13 @@ def main():
             DICE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_dice_count)],
             PRIZE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prize_amount)],
             SEND_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_send_time)],
-            AFTER_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time)],
+            AFTER_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time),
+                MessageHandler(filters.Regex("^(Draft|Set|Back)$"), handle_draft_set_choice)
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        allow_reentry=True
     )
     
     broadcast_handler = ConversationHandler(
