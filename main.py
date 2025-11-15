@@ -239,20 +239,28 @@ async def receive_discussion_group(update: Update, context: ContextTypes.DEFAULT
         )
         return GIVEAWAY_TYPE
     
-    # Store discussion group ID (ensure it's a string for comparison)
-    discussion_group_id = text
-    if discussion_group_id.lstrip('-').isdigit():
-        # It's a numeric ID, store as-is
+    try:
+        chat = await context.bot.get_chat(text)
+        discussion_group_id = str(chat.id)
         context.user_data['discussion_group'] = discussion_group_id
-    else:
-        # It's a username
-        context.user_data['discussion_group'] = discussion_group_id
-    
-    await update.message.reply_text(
-        "Perfect! Now select how many dices you want (1-10):",
-        reply_markup=get_dice_count_keyboard()
-    )
-    return DICE_COUNT
+        
+        await update.message.reply_text(
+            "Perfect! Now select how many dices you want (1-10):",
+            reply_markup=get_dice_count_keyboard()
+        )
+        return DICE_COUNT
+    except Exception as e:
+        logger.error(f"Failed to get discussion group chat: {e}")
+        await update.message.reply_text(
+            "❌ Could not find that discussion group.\n"
+            "Please make sure:\n"
+            "1. The group exists\n"
+            "2. I'm added as an admin there\n"
+            "3. You provided the correct username or ID\n\n"
+            "Please try again:",
+            reply_markup=get_back_keyboard()
+        )
+        return DISCUSSION_GROUP
 
 async def receive_dice_count(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
@@ -638,11 +646,17 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(3)
     
     participants = db.get_giveaway_participants(giveaway_id)
+    logger.info(f"Giveaway {giveaway_id}: Total rolled = {total}, Participants = {len(participants)}")
+    
+    for p in participants:
+        logger.info(f"Participant: {p.get('username')} chose {p.get('number')}")
+    
     winner = None
     
     for participant in participants:
         if participant.get('number') == total:
             winner = participant
+            logger.info(f"Winner found! {participant.get('username')} chose {total}")
             break
     
     if winner:
