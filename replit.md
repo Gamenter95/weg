@@ -29,4 +29,11 @@ A Telegram bot for managing dice giveaways with balance management, scheduled me
 - APScheduler for scheduling
 
 ## Recent Changes
+- November 15, 2025: Fixed critical winner detection bug - Discussion group IDs are now properly resolved from usernames, enabling participant matching to work correctly
+- November 15, 2025: Added debug logging for dice rolls and participant choices to help troubleshoot giveaways
 - November 15, 2025: Initial project setup with database and bot structure
+
+## Bug Fixes
+- **Winner Detection Issue**: Fixed bug where discussion group usernames weren't being converted to numeric IDs, causing the bot to never find participants when checking for winners. The bot now resolves usernames to IDs when you set up a giveaway.
+- **Better Error Handling**: Added validation when setting up discussion groups to ensure the bot can access them.
+- **Debug Logging**: Added detailed logs showing dice roll totals and participant numbers for easier troubleshooting.
