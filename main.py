@@ -350,8 +350,7 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     except ValueError:
         pass
 
-
-    async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
     if text == "Back":
