@@ -21,7 +21,8 @@ class Database:
         return {
             'users': {},
             'giveaways': {},
-            'drafts': {}
+            'drafts': {},
+            'active_giveaways': {}  # Maps discussion_group_id -> giveaway_id
         }
     
     def _save_data(self):
@@ -190,4 +191,25 @@ class Database:
     def mark_prize_claimed(self, giveaway_id: str):
         if giveaway_id in self.data['giveaways']:
             self.data['giveaways'][giveaway_id]['prize_claimed'] = True
+            self._save_data()
+    
+    def set_active_giveaway_for_discussion(self, discussion_group: str, giveaway_id: str):
+        """Set the active giveaway for a discussion group"""
+        if 'active_giveaways' not in self.data:
+            self.data['active_giveaways'] = {}
+        self.data['active_giveaways'][discussion_group] = giveaway_id
+        self._save_data()
+    
+    def get_active_giveaway_for_discussion(self, discussion_group: str) -> Optional[str]:
+        """Get the active giveaway ID for a discussion group"""
+        if 'active_giveaways' not in self.data:
+            self.data['active_giveaways'] = {}
+        return self.data['active_giveaways'].get(discussion_group)
+    
+    def clear_active_giveaway_for_discussion(self, discussion_group: str):
+        """Clear the active giveaway for a discussion group"""
+        if 'active_giveaways' not in self.data:
+            self.data['active_giveaways'] = {}
+        if discussion_group in self.data['active_giveaways']:
+            del self.data['active_giveaways'][discussion_group]
             self._save_data()

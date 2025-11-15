@@ -338,24 +338,20 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     if not text:
         return
     
-    # Find active giveaway for this discussion group
-    active_giveaway = None
-    all_giveaways = db.get_all_giveaways()
+    # Find the active giveaway for this discussion group
+    active_giveaway_id = db.get_active_giveaway_for_discussion(chat_id)
     
-    for giveaway in all_giveaways:
-        giveaway_discussion = giveaway.get('discussion_group')
-        giveaway_status = giveaway.get('status')
-        
-        logger.info(f"Checking giveaway {giveaway.get('giveaway_id')}: discussion={giveaway_discussion}, status={giveaway_status}, current_chat={chat_id}")
-        
-        if giveaway_discussion == chat_id and giveaway_status == 'scheduled':
-            active_giveaway = giveaway
-            logger.info(f"Found active giveaway: {giveaway.get('giveaway_id')}")
-            break
-    
-    if not active_giveaway:
+    if not active_giveaway_id:
         logger.info(f"No active giveaway found for chat {chat_id}")
         return
+    
+    active_giveaway = db.get_giveaway(active_giveaway_id)
+    
+    if not active_giveaway or active_giveaway.get('status') != 'scheduled':
+        logger.info(f"Active giveaway {active_giveaway_id} not found or not scheduled")
+        return
+    
+    logger.info(f"Found active giveaway: {active_giveaway_id}")
     
     try:
         number = int(text)
@@ -627,12 +623,16 @@ async def run_scheduled_giveaway(context: ContextTypes.DEFAULT_TYPE, giveaway_id
     max_number = dice_count * 6
     
     try:
+        # Create a unique identifier that participants can see
         message = await context.bot.send_message(
             chat_id=channel,
-            text=f"🎲 Dice Giveaway!\n\nPlease send a number between {min_number}-{max_number} ✅\nComment Down ❤️"
+            text=f"🎲 Dice Giveaway #{giveaway_id.split('_')[-1]}!\n\nPlease send a number between {min_number}-{max_number} ✅\nComment Down ❤️"
         )
         
         db.update_giveaway_message(giveaway_id, message.message_id)
+        
+        # Mark this as the active giveaway for the discussion group
+        db.set_active_giveaway_for_discussion(discussion_group, giveaway_id)
         
         context.job_queue.run_once(
             start_giveaway_rolling,
@@ -650,6 +650,10 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
     
     if not giveaway:
         return
+    
+    # Clear the active giveaway for this discussion group so no more participants can join
+    discussion_group = giveaway.get('discussion_group')
+    db.clear_active_giveaway_for_discussion(discussion_group)
     
     channel = giveaway.get('channel')
     dice_count = giveaway.get('dice_count', 1)
