@@ -21,7 +21,7 @@ ADMIN_USER_ID = 6186511950
 db = Database()
 scheduler = AsyncIOScheduler()
 
-CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, SEND_TIME, AFTER_TIME = range(7)
+CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, AFTER_TIME = range(6)
 BROADCAST_MESSAGE = 0
 
 def get_main_keyboard():
@@ -294,12 +294,12 @@ async def receive_prize_amount(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['prize_amount'] = amount
         await update.message.reply_text(
             f"Prize amount: ₹{amount:.2f}\n\n"
-            "When should the giveaway message be sent?\n"
-            "Please enter the time in format: HH:MM (24-hour format)\n"
-            "Example: 12:00 or 23:30",
+            "How long after sending should the giveaway start?\n"
+            "Please enter time in minutes:\n"
+            "Example: 5 (for 5 minutes)",
             reply_markup=get_back_keyboard()
         )
-        return SEND_TIME
+        return AFTER_TIME
     except ValueError:
         await update.message.reply_text(
             "Please enter a valid number for the prize amount:",
@@ -350,41 +350,7 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     except ValueError:
         pass
 
-async def receive_send_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    
-    if text == "Back":
-        await update.message.reply_text(
-            "Please send the prize amount:",
-            reply_markup=get_back_keyboard()
-        )
-        return PRIZE_AMOUNT
-    
-    try:
-        time_parts = text.split(':')
-        if len(time_parts) != 2:
-            raise ValueError
-        hour = int(time_parts[0])
-        minute = int(time_parts[1])
-        if not (0 <= hour <= 23 and 0 <= minute <= 59):
-            raise ValueError
-        
-        context.user_data['send_time'] = text
-        await update.message.reply_text(
-            f"Send time set to: {text}\n\n"
-            "How long after sending should the giveaway start?\n"
-            "Please enter time in minutes:\n"
-            "Example: 5 (for 5 minutes)",
-            reply_markup=get_back_keyboard()
-        )
-        return AFTER_TIME
-    except ValueError:
-        await update.message.reply_text(
-            "Invalid time format. Please use HH:MM (24-hour format)\n"
-            "Example: 12:00 or 23:30",
-            reply_markup=get_back_keyboard()
-        )
-        return SEND_TIME
+
 
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -589,8 +555,9 @@ async def handle_prize_claim(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=get_main_keyboard()
     )
 
-async def run_scheduled_giveaway(context: ContextTypes.DEFAULT_TYPE):
-    giveaway_id = context.job.data
+async def run_scheduled_giveaway(context: ContextTypes.DEFAULT_TYPE, giveaway_id=None):
+    if giveaway_id is None:
+        giveaway_id = context.job.data
     giveaway = db.get_giveaway(giveaway_id)
     
     if not giveaway:
@@ -728,10 +695,10 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     if text == "Back":
         await update.message.reply_text(
-            "Please enter the send time in HH:MM format:",
+            "Please send the prize amount:",
             reply_markup=get_back_keyboard()
         )
-        return SEND_TIME
+        return PRIZE_AMOUNT
     
     if text in ["Draft", "Set"]:
         return await handle_draft_set_choice(update, context)
@@ -755,7 +722,6 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"Discussion Group: {context.user_data.get('discussion_group')}\n"
             f"Number of Dices: {context.user_data.get('dice_count')}\n"
             f"Prize Amount: ₹{prize_amount:.2f}\n"
-            f"Send Time: {context.user_data.get('send_time')}\n"
             f"Start After: {after_minutes} minutes\n\n"
             f"Your Balance: ₹{balance:.2f}\n"
         )
@@ -821,7 +787,6 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
                 'discussion_group': context.user_data.get('discussion_group'),
                 'dice_count': context.user_data.get('dice_count'),
                 'prize_amount': prize_amount,
-                'send_time': context.user_data.get('send_time'),
                 'after_time': context.user_data.get('after_time')
             }
             
@@ -829,29 +794,16 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
             new_balance = balance - prize_amount
             db.update_user_balance(user.id, new_balance)
             
-            send_time_str = context.user_data.get('send_time')
-            hour, minute = map(int, send_time_str.split(':'))
-            
-            now = datetime.now()
-            scheduled_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            
-            if scheduled_time <= now:
-                scheduled_time += timedelta(days=1)
-            
-            context.application.job_queue.run_once(
-                run_scheduled_giveaway,
-                when=scheduled_time,
-                data=giveaway_id,
-                name=f"giveaway_{giveaway_id}"
-            )
-            
             await update.message.reply_text(
                 f"✅ Giveaway created successfully!\n\n"
                 f"₹{prize_amount:.2f} has been deducted from your balance.\n"
                 f"New balance: ₹{new_balance:.2f}\n\n"
-                f"Your giveaway will be sent at {send_time_str}",
+                f"Sending giveaway to channel now...",
                 reply_markup=get_main_keyboard()
             )
+            
+            await run_scheduled_giveaway(context, giveaway_id)
+            
             context.user_data.clear()
             return ConversationHandler.END
         else:
@@ -964,7 +916,6 @@ def main():
             DISCUSSION_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_discussion_group)],
             DICE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_dice_count)],
             PRIZE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prize_amount)],
-            SEND_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_send_time)],
             AFTER_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
