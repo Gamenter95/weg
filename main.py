@@ -239,7 +239,15 @@ async def receive_discussion_group(update: Update, context: ContextTypes.DEFAULT
         )
         return GIVEAWAY_TYPE
     
-    context.user_data['discussion_group'] = text
+    # Store discussion group ID (ensure it's a string for comparison)
+    discussion_group_id = text
+    if discussion_group_id.lstrip('-').isdigit():
+        # It's a numeric ID, store as-is
+        context.user_data['discussion_group'] = discussion_group_id
+    else:
+        # It's a username
+        context.user_data['discussion_group'] = discussion_group_id
+    
     await update.message.reply_text(
         "Perfect! Now select how many dices you want (1-10):",
         reply_markup=get_dice_count_keyboard()
@@ -347,24 +355,28 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
                     user.username or user.first_name,
                     number
                 )
+                # Don't delete valid participation messages
+                logger.info(f"User {user.id} participated with number {number}")
             else:
-                error_msg = await update.message.reply_text(
-                    "You have already participated!"
-                )
-                await asyncio.sleep(5)
+                # Only send error without deleting
                 try:
-                    await error_msg.delete()
-                except Exception:
-                    pass
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"@{user.username or user.first_name}, you have already participated!",
+                        message_thread_id=update.message.message_thread_id
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send already participated message: {e}")
         else:
-            error_msg = await update.message.reply_text(
-                f"Please choose a number between {min_num}-{max_num}"
-            )
-            await asyncio.sleep(5)
+            # Invalid number - send error
             try:
-                await error_msg.delete()
-            except Exception:
-                pass
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"@{user.username or user.first_name}, please choose a number between {min_num}-{max_num}",
+                    message_thread_id=update.message.message_thread_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to send invalid number message: {e}")
     except ValueError:
         pass
 
