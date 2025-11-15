@@ -308,7 +308,7 @@ async def receive_prize_amount(update: Update, context: ContextTypes.DEFAULT_TYP
         return PRIZE_AMOUNT
 
 async def handle_giveaway_participation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message.reply_to_message:
+    if not update.message or not update.message.reply_to_message:
         return
     
     replied_message_id = update.message.reply_to_message.message_id
@@ -633,21 +633,34 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
         
         db.update_giveaway_status(giveaway_id, 'completed')
     else:
+        # Send result to channel
+        await context.bot.send_message(
+            chat_id=channel,
+            text=f"😔 Giveaway Result\n\n"
+                 f"Number Got: {total}\n"
+                 f"Winner: No one\n"
+                 f"Reason: No one chose the correct number"
+        )
+        
+        # Ask creator in PM if they want to redo
+        creator_id = giveaway.get('user_id')
         keyboard = [
             [InlineKeyboardButton("Yes", callback_data=f"redo_yes_{giveaway_id}"),
              InlineKeyboardButton("No", callback_data=f"redo_no_{giveaway_id}")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await context.bot.send_message(
-            chat_id=channel,
-            text=f"😔 Giveaway Result\n\n"
-                 f"Number Got: {total}\n"
-                 f"Winner: No one\n"
-                 f"Reason: No one chose the correct number\n\n"
-                 f"Want to redo?",
-            reply_markup=reply_markup
-        )
+        try:
+            await context.bot.send_message(
+                chat_id=creator_id,
+                text=f"😔 Your giveaway had no winner!\n\n"
+                     f"Number: {total}\n"
+                     f"Reason: No one chose the correct number\n\n"
+                     f"Would you like to redo the giveaway?",
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            logger.error(f"Failed to send redo prompt to creator: {e}")
 
 async def handle_redo_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -874,6 +887,13 @@ async def handle_drafts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    
+    # Only handle text in private chats, ignore group messages
+    if update.message.chat.type != 'private':
+        return
+    
     text = update.message.text
     
     if text == "Balance":
