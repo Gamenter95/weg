@@ -4,7 +4,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import BOT_TOKEN, ADMIN_USER_ID
-from handlers.start import start, handle_balance, handle_add, handle_help, handle_contact
+from handlers.start import start, handle_balance, handle_add, handle_help, handle_contact, handle_prize_claim
 from handlers.giveaway import start_create_giveaway, receive_channel, receive_giveaway_type, receive_discussion_group, receive_dice_count, receive_prize_amount, receive_after_time, cancel, CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, AFTER_TIME
 from handlers.withdraw import start_withdraw, receive_withdraw_amount, receive_withdraw_upi, WITHDRAW_AMOUNT, WITHDRAW_UPI
 from handlers.management import handle_my_giveaways, handle_drafts, handle_draft_activate, handle_draft_delete, handle_giveaway_view, handle_giveaway_cancel, handle_close_menu

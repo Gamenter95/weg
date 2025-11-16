@@ -1,37 +1,45 @@
 
-from telegram import KeyboardButton, ReplyKeyboardMarkup
+from telegram import ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from config import CHANNEL_USERNAME
 
 def get_main_keyboard():
     keyboard = [
-        [KeyboardButton("Create Giveaway")],
-        [KeyboardButton("Add"), KeyboardButton("Balance"), KeyboardButton("Out")],
-        [KeyboardButton("My Giveaways"), KeyboardButton("Drafts")],
-        [KeyboardButton("Help"), KeyboardButton("Contact")]
+        ["Create Giveaway", "Balance"],
+        ["My Giveaways", "Drafts"],
+        ["Out", "Add"],
+        ["Help", "Contact"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_back_keyboard():
-    keyboard = [[KeyboardButton("Back")]]
+    keyboard = [["Back"]]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_giveaway_type_keyboard():
     keyboard = [
-        [KeyboardButton("Dice Giveaway")],
-        [KeyboardButton("Back")]
+        ["Dice Giveaway"],
+        ["Back"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_dice_count_keyboard():
     keyboard = [
-        [KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")],
-        [KeyboardButton("4"), KeyboardButton("5"), KeyboardButton("6")],
-        [KeyboardButton("7"), KeyboardButton("8"), KeyboardButton("9")],
-        [KeyboardButton("10"), KeyboardButton("Back")]
+        ["1", "2", "3"],
+        ["4", "5", "6"],
+        ["7", "8", "9", "10"],
+        ["Back"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_draft_set_keyboard():
     keyboard = [
-        [KeyboardButton("Draft"), KeyboardButton("Set"), KeyboardButton("Back")]
+        ["Draft", "Set"],
+        ["Back"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_join_channel_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
