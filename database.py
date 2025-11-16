@@ -237,21 +237,7 @@ class Database:
         return withdrawal_id
     
     def get_withdrawal_request(self, withdrawal_id: str) -> Optional[dict]:
-        """Get a withdrawal request by ID"""
-        if 'withdrawals' not in self.data:
-            self.data['withdrawals'] = {}
-        return self.data['withdrawals'].get(withdrawal_id)
-    
-    def update_withdrawal_status(self, withdrawal_id: str, status: str, rejection_reason: str = None):
-        """Update withdrawal request status"""
-        if 'withdrawals' not in self.data:
-            self.data['withdrawals'] = {}
-        
-        if withdrawal_id in self.data['withdrawals']:
-            self.data['withdrawals'][withdrawal_id]['status'] = status
-            if rejection_reason:
-                self.data['withdrawals'][withdrawal_id]['rejection_reason'] = rejection_reason
-            self._save_data()
+
     
     def set_active_first_comment_giveaway(self, group_id: str, giveaway_id: str):
         """Set the active first comment giveaway for a group"""
@@ -292,4 +278,20 @@ class Database:
         """Set the start time for a first comment giveaway"""
         if giveaway_id in self.data['giveaways']:
             self.data['giveaways'][giveaway_id]['start_time_iso'] = start_time
+            self._save_data()
+
+        """Get a withdrawal request by ID"""
+        if 'withdrawals' not in self.data:
+            self.data['withdrawals'] = {}
+        return self.data['withdrawals'].get(withdrawal_id)
+    
+    def update_withdrawal_status(self, withdrawal_id: str, status: str, rejection_reason: str = None):
+        """Update withdrawal request status"""
+        if 'withdrawals' not in self.data:
+            self.data['withdrawals'] = {}
+        
+        if withdrawal_id in self.data['withdrawals']:
+            self.data['withdrawals'][withdrawal_id]['status'] = status
+            if rejection_reason:
+                self.data['withdrawals'][withdrawal_id]['rejection_reason'] = rejection_reason
             self._save_data()
