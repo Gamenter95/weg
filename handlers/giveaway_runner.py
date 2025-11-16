@@ -1,7 +1,7 @@
 
 import logging
 import asyncio
-from telegram import ReactionTypeEmoji
+from telegram import Update, ReactionTypeEmoji
 from telegram.ext import ContextTypes
 from database import Database
 
