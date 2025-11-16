@@ -52,7 +52,7 @@ def main():
     # Start web server
     start_webserver()
     
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token("8480692956:AAHxPPhLTKq4IuZ2LYtVTfHT9AHkP75bf9w").build()
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.Regex("^Create Giveaway$"), start_create_giveaway)],
