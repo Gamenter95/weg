@@ -820,7 +820,9 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
                  f"Number: {total}\n"
                  f"Winner: {winner_display}\n\n"
                  f"Winner, please click here to grab the prize:\n"
-                 f"[Click Here](https://t.me/WeooGiveawayBot?start=prize{giveaway_id})",
+                 f"[Click Here](https://t.me/WeooGiveawayBot?start=prize{giveaway_id})\n\n"
+                 f"━━━━━━━━━━━━━━━━\n"
+                 f"🤖 Powered by @WeooGiveawayBot",
             parse_mode='Markdown'
         )
         
@@ -840,7 +842,9 @@ async def start_giveaway_rolling(context: ContextTypes.DEFAULT_TYPE):
                  f"Number: {total}\n"
                  f"Winner: No one\n"
                  f"Reason: No one chose the correct number\n\n"
-                 f"Prize amount refunded to creator."
+                 f"Prize amount refunded to creator.\n\n"
+                 f"━━━━━━━━━━━━━━━━\n"
+                 f"🤖 Powered by @WeooGiveawayBot"
         )
         
         db.update_giveaway_status(giveaway_id, 'completed')
