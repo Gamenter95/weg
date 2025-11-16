@@ -81,6 +81,7 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # Commands first
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("panel", admin_panel))
     application.add_handler(CommandHandler("ban", ban_user))
@@ -88,10 +89,8 @@ def main():
     application.add_handler(CommandHandler("add", add_balance_admin))
     application.add_handler(CommandHandler("remove", remove_balance_admin))
     application.add_handler(CommandHandler("say", say_to_user))
-    application.add_handler(broadcast_handler)
-    application.add_handler(withdraw_handler)
-    application.add_handler(conv_handler)
-
+    
+    # Callback query handlers
     application.add_handler(CallbackQueryHandler(handle_withdraw_done, pattern="^withdraw_done_"))
     application.add_handler(CallbackQueryHandler(handle_withdraw_reject, pattern="^withdraw_reject_"))
     application.add_handler(CallbackQueryHandler(handle_draft_activate, pattern="^activate_draft_"))
@@ -99,11 +98,22 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_giveaway_view, pattern="^view_giveaway_"))
     application.add_handler(CallbackQueryHandler(handle_giveaway_cancel, pattern="^cancel_giveaway_"))
     application.add_handler(CallbackQueryHandler(handle_close_menu, pattern="^close_menu$"))
-
+    
+    # Conversation handlers
+    application.add_handler(broadcast_handler)
+    application.add_handler(withdraw_handler)
+    application.add_handler(conv_handler)
+    
+    # Group message handlers
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), handle_giveaway_participation))
-
+    
+    # Private message handlers - handle buttons BEFORE conversation fallback
+    application.add_handler(MessageHandler(filters.Regex("^(Balance|Add|Help|Contact|My Giveaways|Drafts)$") & filters.ChatType.PRIVATE, handle_text))
+    
+    # Admin rejection reason handler
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE & filters.User(ADMIN_USER_ID), handle_rejection_reason))
-
+    
+    # Catch-all for other private messages
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE, handle_text))
 
     logger.info("Bot started successfully!")
