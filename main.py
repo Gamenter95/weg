@@ -22,6 +22,7 @@ db = Database()
 scheduler = AsyncIOScheduler()
 
 CHANNEL, GIVEAWAY_TYPE, DISCUSSION_GROUP, DICE_COUNT, PRIZE_AMOUNT, AFTER_TIME = range(6)
+FIRST_COMMENT_GROUP, FIRST_COMMENT_CODE, FIRST_COMMENT_SPAM, FIRST_COMMENT_AMOUNT, FIRST_COMMENT_START = range(5)
 BROADCAST_MESSAGE = 0
 WITHDRAW_AMOUNT, WITHDRAW_UPI = range(2)
 
@@ -41,6 +42,7 @@ def get_back_keyboard():
 def get_giveaway_type_keyboard():
     keyboard = [
         [KeyboardButton("Dice Giveaway")],
+        [KeyboardButton("First Comment")],
         [KeyboardButton("Back")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -56,7 +58,14 @@ def get_dice_count_keyboard():
 
 def get_draft_set_keyboard():
     keyboard = [
-        [KeyboardButton("Draft"), KeyboardButton("Set"), KeyboardButton("Back")]
+        [KeyboardButton("Draft"), KeyboardButton("Send"), KeyboardButton("Back")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+def get_spam_keyboard():
+    keyboard = [
+        [KeyboardButton("Allowed"), KeyboardButton("Not Allowed")],
+        [KeyboardButton("Back")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -337,6 +346,16 @@ async def receive_giveaway_type(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=get_back_keyboard()
         )
         return DISCUSSION_GROUP
+    elif text == "First Comment":
+        # End this conversation and let the First Comment handler take over
+        context.user_data['channel_for_first_comment'] = context.user_data.get('channel')
+        await update.message.reply_text(
+            "💬 First Comment Giveaway selected!\n\n"
+            "Please send the chat group username or ID where users will comment.\n"
+            "Make sure I'm added as an admin there!",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_GROUP
     else:
         await update.message.reply_text(
             "Please select a valid giveaway type:",
@@ -449,6 +468,265 @@ async def handle_giveaway_participation(update: Update, context: ContextTypes.DE
     chat_id = str(update.message.chat.id)
     user = update.effective_user
     text = update.message.text
+
+
+# First Comment Giveaway Handlers
+async def start_first_comment_giveaway(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['giveaway_type'] = 'first_comment'
+    await update.message.reply_text(
+        "💬 First Comment Giveaway\n\n"
+        "Please send the chat group username or ID where users will comment.\n"
+        "Make sure I'm added as an admin there!",
+        reply_markup=get_back_keyboard()
+    )
+    return FIRST_COMMENT_GROUP
+
+async def receive_first_comment_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Select giveaway type:",
+            reply_markup=get_giveaway_type_keyboard()
+        )
+        return GIVEAWAY_TYPE
+    
+    try:
+        chat = await context.bot.get_chat(text)
+        group_id = str(chat.id)
+        context.user_data['first_comment_group'] = group_id
+        # Ensure channel is preserved
+        if 'channel_for_first_comment' in context.user_data:
+            context.user_data['channel'] = context.user_data['channel_for_first_comment']
+        
+        await update.message.reply_text(
+            "Great! Now enter a custom code for this giveaway.\n"
+            "Users will need to include this code in their comment:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_CODE
+    except Exception as e:
+        logger.error(f"Failed to get chat group: {e}")
+        await update.message.reply_text(
+            "❌ Could not find that group.\n"
+            "Please make sure:\n"
+            "1. The group exists\n"
+            "2. I'm added as an admin there\n"
+            "3. You provided the correct username or ID\n\n"
+            "Please try again:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_GROUP
+
+async def receive_first_comment_code(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Please send the chat group username or ID:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_GROUP
+    
+    context.user_data['first_comment_code'] = text
+    await update.message.reply_text(
+        "Perfect! Is spamming allowed in this giveaway?",
+        reply_markup=get_spam_keyboard()
+    )
+    return FIRST_COMMENT_SPAM
+
+async def receive_first_comment_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Please enter the custom code:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_CODE
+    
+    if text in ["Allowed", "Not Allowed"]:
+        context.user_data['spam_allowed'] = (text == "Allowed")
+        await update.message.reply_text(
+            "Good! Now enter the prize amount (in ₹):",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_AMOUNT
+    else:
+        await update.message.reply_text(
+            "Please select whether spamming is allowed:",
+            reply_markup=get_spam_keyboard()
+        )
+        return FIRST_COMMENT_SPAM
+
+async def receive_first_comment_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Is spamming allowed?",
+            reply_markup=get_spam_keyboard()
+        )
+        return FIRST_COMMENT_SPAM
+    
+    try:
+        amount = float(text)
+        if amount <= 0:
+            await update.message.reply_text(
+                "Prize amount must be greater than 0. Please try again:",
+                reply_markup=get_back_keyboard()
+            )
+            return FIRST_COMMENT_AMOUNT
+        
+        context.user_data['prize_amount'] = amount
+        await update.message.reply_text(
+            f"Prize amount: ₹{amount:.2f}\n\n"
+            "How long (in minutes) should the giveaway run before selecting the winner?\n"
+            "Example: 5 (for 5 minutes)",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_START
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter a valid number for the prize amount:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_AMOUNT
+
+async def receive_first_comment_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    
+    if text == "Back":
+        await update.message.reply_text(
+            "Please send the prize amount:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_AMOUNT
+    
+    if text in ["Draft", "Send"]:
+        return await handle_first_comment_draft_send(update, context)
+    
+    try:
+        start_minutes = int(text)
+        if start_minutes <= 0:
+            raise ValueError
+        
+        context.user_data['start_time'] = start_minutes
+        
+        user = update.effective_user
+        user_data = db.get_user(user.id)
+        prize_amount = context.user_data.get('prize_amount', 0)
+        balance = user_data.get('balance', 0.0)
+        
+        summary = (
+            "📋 First Comment Giveaway Summary:\n\n"
+            f"Channel: {context.user_data.get('channel', 'Not set')}\n"
+            f"Type: First Comment\n"
+            f"Group: {context.user_data.get('first_comment_group')}\n"
+            f"Code: {context.user_data.get('first_comment_code')}\n"
+            f"Spamming: {'Allowed' if context.user_data.get('spam_allowed') else 'Not Allowed'}\n"
+            f"Prize Amount: ₹{prize_amount:.2f}\n"
+            f"Duration: {start_minutes} minutes\n\n"
+            f"Your Balance: ₹{balance:.2f}\n"
+        )
+        
+        if balance >= prize_amount:
+            summary += "\n✅ You have sufficient balance!\n\nWhat would you like to do?"
+        else:
+            summary += (
+                f"\n❌ Insufficient balance!\n"
+                f"Required: ₹{prize_amount:.2f}\n"
+                f"You have: ₹{balance:.2f}\n\n"
+                f"Please save as draft and add funds to your balance.\n"
+                f"Contact {DEVELOPER_CONTACT} to add funds."
+            )
+        
+        await update.message.reply_text(
+            summary,
+            reply_markup=get_draft_set_keyboard()
+        )
+        
+        context.user_data['waiting_for_draft_send'] = True
+        return FIRST_COMMENT_START
+    except ValueError:
+        await update.message.reply_text(
+            "Please enter a valid number of minutes:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_START
+
+async def handle_first_comment_draft_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    user = update.effective_user
+    
+    if text == "Draft":
+        draft_data = {
+            'channel': context.user_data.get('channel'),
+            'giveaway_type': 'first_comment',
+            'first_comment_group': context.user_data.get('first_comment_group'),
+            'first_comment_code': context.user_data.get('first_comment_code'),
+            'spam_allowed': context.user_data.get('spam_allowed'),
+            'prize_amount': context.user_data.get('prize_amount'),
+            'start_time': context.user_data.get('start_time')
+        }
+        
+        draft_id = db.add_draft(user.id, draft_data)
+        await update.message.reply_text(
+            "✅ Giveaway saved as draft!\n\n"
+            "You can access it from the 'Drafts' button.",
+            reply_markup=get_main_keyboard()
+        )
+        context.user_data.clear()
+        return ConversationHandler.END
+    
+    elif text == "Send":
+        user_data = db.get_user(user.id)
+        prize_amount = context.user_data.get('prize_amount', 0)
+        balance = user_data.get('balance', 0.0)
+        
+        if balance >= prize_amount:
+            giveaway_data = {
+                'channel': context.user_data.get('channel'),
+                'giveaway_type': 'first_comment',
+                'first_comment_group': context.user_data.get('first_comment_group'),
+                'first_comment_code': context.user_data.get('first_comment_code'),
+                'spam_allowed': context.user_data.get('spam_allowed'),
+                'prize_amount': prize_amount,
+                'start_time': context.user_data.get('start_time')
+            }
+            
+            giveaway_id = db.add_giveaway(user.id, giveaway_data)
+            new_balance = balance - prize_amount
+            db.update_user_balance(user.id, new_balance)
+            
+            await update.message.reply_text(
+                f"✅ Giveaway created successfully!\n\n"
+                f"₹{prize_amount:.2f} has been deducted from your balance.\n"
+                f"New balance: ₹{new_balance:.2f}\n\n"
+                f"Sending giveaway to channel now...",
+                reply_markup=get_main_keyboard()
+            )
+            
+            await run_first_comment_giveaway(context, giveaway_id)
+            
+            context.user_data.clear()
+            return ConversationHandler.END
+        else:
+            await update.message.reply_text(
+                "❌ Insufficient balance! Please save as draft and add funds first.",
+                reply_markup=get_main_keyboard()
+            )
+            context.user_data.clear()
+            return ConversationHandler.END
+    
+    elif text == "Back":
+        await update.message.reply_text(
+            "Please enter the duration in minutes:",
+            reply_markup=get_back_keyboard()
+        )
+        return FIRST_COMMENT_START
+
+
     
     if not text:
         return
@@ -573,6 +851,203 @@ async def unban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         await update.message.reply_text("Usage: /unban <user_id>")
         return
+
+
+async def run_first_comment_giveaway(context: ContextTypes.DEFAULT_TYPE, giveaway_id=None):
+    if giveaway_id is None:
+        giveaway_id = context.job.data
+    giveaway = db.get_giveaway(giveaway_id)
+    
+    if not giveaway:
+        return
+    
+    channel = giveaway.get('channel')
+    group_id = giveaway.get('first_comment_group')
+    code = giveaway.get('first_comment_code')
+    spam_allowed = giveaway.get('spam_allowed', False)
+    start_minutes = giveaway.get('start_time', 5)
+    
+    # Calculate end time
+    end_time = datetime.now() + timedelta(minutes=start_minutes)
+    end_time_str = end_time.strftime("%I:%M %p")
+    
+    try:
+        # Send giveaway message to channel
+        message = await context.bot.send_message(
+            chat_id=channel,
+            text=f"💬 First Comment Giveaway\n\n"
+                 f"Code: `{code}`\n"
+                 f"Time: {end_time_str}\n"
+                 f"Spamming: {'Allowed' if spam_allowed else 'Not Allowed'}\n\n"
+                 f"Comment Below!",
+            parse_mode='Markdown'
+        )
+        
+        db.update_giveaway_message(giveaway_id, message.message_id)
+        db.set_first_comment_start_time(giveaway_id, datetime.now().isoformat())
+        
+        # Set the active first comment giveaway for this group
+        db.set_active_first_comment_giveaway(group_id, giveaway_id)
+        
+        # Schedule winner selection
+        context.job_queue.run_once(
+            select_first_comment_winner,
+            when=start_minutes * 60,
+            data=giveaway_id,
+            name=f"first_comment_{giveaway_id}"
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to send first comment giveaway message: {e}")
+
+async def handle_first_comment_participation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.message:
+        return
+    
+    # Only process messages from groups/supergroups
+    if update.message.chat.type not in ['group', 'supergroup']:
+        return
+    
+    chat_id = str(update.message.chat.id)
+    user = update.effective_user
+    text = update.message.text
+    
+    if not text:
+        return
+    
+    # Find the active first comment giveaway for this group
+    active_giveaway_id = db.get_active_first_comment_giveaway(chat_id)
+    
+    if not active_giveaway_id:
+        return
+    
+    active_giveaway = db.get_giveaway(active_giveaway_id)
+    
+    if not active_giveaway or active_giveaway.get('status') != 'scheduled':
+        return
+    
+    required_code = active_giveaway.get('first_comment_code', '')
+    spam_allowed = active_giveaway.get('spam_allowed', False)
+    
+    # Check if message contains the required code
+    if required_code not in text:
+        return
+    
+    # Check if user already participated and spamming is not allowed
+    participants = db.get_giveaway_participants(active_giveaway_id)
+    user_participated = any(p.get('user_id') == user.id for p in participants)
+    
+    if user_participated and not spam_allowed:
+        return
+    
+    # Add participant with timestamp
+    if not user_participated:
+        db.add_first_comment_participant(
+            active_giveaway_id,
+            user.id,
+            user.username or user.first_name,
+            datetime.now().isoformat(),
+            update.message.message_id
+        )
+        
+        # Try to react with thumbs up emoji
+        try:
+            from telegram import ReactionTypeEmoji
+            await update.message.set_reaction(
+                reaction=[ReactionTypeEmoji(emoji="👍")],
+                is_big=False
+            )
+        except Exception as e:
+            logger.info(f"Could not set reaction: {e}")
+
+async def select_first_comment_winner(context: ContextTypes.DEFAULT_TYPE):
+    giveaway_id = context.job.data
+    giveaway = db.get_giveaway(giveaway_id)
+    
+    if not giveaway:
+        return
+    
+    # Clear the active giveaway for this group
+    group_id = giveaway.get('first_comment_group')
+    db.clear_active_first_comment_giveaway(group_id)
+    
+    channel = giveaway.get('channel')
+    prize_amount = giveaway.get('prize_amount', 0)
+    code = giveaway.get('first_comment_code', '')
+    start_time_str = giveaway.get('start_time_iso')
+    
+    if not start_time_str:
+        logger.error(f"No start time found for giveaway {giveaway_id}")
+        return
+    
+    start_time = datetime.fromisoformat(start_time_str)
+    end_time = start_time + timedelta(minutes=giveaway.get('start_time', 5))
+    
+    participants = db.get_giveaway_participants(giveaway_id)
+    logger.info(f"First Comment Giveaway {giveaway_id}: Total participants = {len(participants)}")
+    
+    # Filter participants who commented within the time window
+    valid_participants = []
+    for p in participants:
+        comment_time = datetime.fromisoformat(p.get('timestamp'))
+        if start_time <= comment_time <= end_time:
+            valid_participants.append(p)
+    
+    logger.info(f"Valid participants within time window: {len(valid_participants)}")
+    
+    if valid_participants:
+        # Sort by timestamp and get the first one
+        valid_participants.sort(key=lambda x: x.get('timestamp'))
+        winner = valid_participants[0]
+        winner_id = winner.get('user_id')
+        winner_username = winner.get('username', 'Unknown')
+        
+        # Format winner display
+        if winner_username.startswith('@'):
+            winner_display = winner_username
+        elif winner_username and winner_username != 'Unknown':
+            winner_display = f"@{winner_username}"
+        else:
+            try:
+                user_info = await context.bot.get_chat(winner_id)
+                winner_display = user_info.first_name
+            except:
+                winner_display = winner_username
+        
+        db.set_giveaway_winner(giveaway_id, winner_id)
+        
+        await context.bot.send_message(
+            chat_id=channel,
+            text=f"🎉 First Comment Giveaway Result!\n\n"
+                 f"Code: `{code}`\n"
+                 f"Winner: {winner_display}\n\n"
+                 f"Winner, please click here to grab the prize:\n"
+                 f"[Click Here](https://t.me/WeooGiveawayBot?start=prize{giveaway_id})",
+            parse_mode='Markdown'
+        )
+        
+        db.update_giveaway_status(giveaway_id, 'completed')
+    else:
+        # No valid winner - refund creator
+        creator_id = giveaway.get('user_id')
+        
+        user_data = db.get_user(creator_id)
+        new_balance = user_data.get('balance', 0) + prize_amount
+        db.update_user_balance(creator_id, new_balance)
+        
+        await context.bot.send_message(
+            chat_id=channel,
+            text=f"😔 First Comment Giveaway Result\n\n"
+                 f"Code: `{code}`\n"
+                 f"Winner: No one\n"
+                 f"Reason: No valid comments with the code within the time window\n\n"
+                 f"Prize amount refunded to creator.",
+            parse_mode='Markdown'
+        )
+        
+        db.update_giveaway_status(giveaway_id, 'completed')
+
+
     
     try:
         user_id = int(context.args[0])
@@ -857,7 +1332,7 @@ async def receive_after_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return PRIZE_AMOUNT
     
-    if text in ["Draft", "Set"]:
+    if text in ["Draft", "Send"]:
         return await handle_draft_set_choice(update, context)
     
     try:
@@ -932,7 +1407,7 @@ async def handle_draft_set_choice(update: Update, context: ContextTypes.DEFAULT_
         context.user_data.clear()
         return ConversationHandler.END
     
-    elif text == "Set":
+    elif text == "Send":
         user_data = db.get_user(user.id)
         prize_amount = context.user_data.get('prize_amount', 0)
         balance = user_data.get('balance', 0.0)
@@ -1353,6 +1828,11 @@ def main():
             DICE_COUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_dice_count)],
             PRIZE_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_prize_amount)],
             AFTER_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_after_time)],
+            FIRST_COMMENT_GROUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_first_comment_group)],
+            FIRST_COMMENT_CODE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_first_comment_code)],
+            FIRST_COMMENT_SPAM: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_first_comment_spam)],
+            FIRST_COMMENT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_first_comment_amount)],
+            FIRST_COMMENT_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_first_comment_start)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True
@@ -1395,6 +1875,9 @@ def main():
     application.add_handler(CallbackQueryHandler(handle_close_menu, pattern="^close_menu$"))
     
     # Handle group messages for giveaway participation (must come before private chat handler)
+    # First Comment participation has priority
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), handle_first_comment_participation))
+    # Then Dice participation
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP), handle_giveaway_participation))
     
     # Handle admin rejection reason (must come before general text handler)

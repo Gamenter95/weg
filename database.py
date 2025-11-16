@@ -22,7 +22,8 @@ class Database:
             'users': {},
             'giveaways': {},
             'drafts': {},
-            'active_giveaways': {},  # Maps discussion_group_id -> giveaway_id
+            'active_giveaways': {},  # Maps discussion_group_id -> dice giveaway_id
+            'active_first_comment_giveaways': {},  # Maps group_id -> first comment giveaway_id
             'withdrawals': {}
         }
     
@@ -236,6 +237,49 @@ class Database:
         return withdrawal_id
     
     def get_withdrawal_request(self, withdrawal_id: str) -> Optional[dict]:
+
+    
+    def set_active_first_comment_giveaway(self, group_id: str, giveaway_id: str):
+        """Set the active first comment giveaway for a group"""
+        if 'active_first_comment_giveaways' not in self.data:
+            self.data['active_first_comment_giveaways'] = {}
+        self.data['active_first_comment_giveaways'][group_id] = giveaway_id
+        self._save_data()
+    
+    def get_active_first_comment_giveaway(self, group_id: str) -> Optional[str]:
+        """Get the active first comment giveaway ID for a group"""
+        if 'active_first_comment_giveaways' not in self.data:
+            self.data['active_first_comment_giveaways'] = {}
+        return self.data['active_first_comment_giveaways'].get(group_id)
+    
+    def clear_active_first_comment_giveaway(self, group_id: str):
+        """Clear the active first comment giveaway for a group"""
+        if 'active_first_comment_giveaways' not in self.data:
+            self.data['active_first_comment_giveaways'] = {}
+        if group_id in self.data['active_first_comment_giveaways']:
+            del self.data['active_first_comment_giveaways'][group_id]
+            self._save_data()
+    
+    def add_first_comment_participant(self, giveaway_id: str, user_id: int, username: str, timestamp: str, message_id: int):
+        """Add a participant to a first comment giveaway with timestamp"""
+        if giveaway_id in self.data['giveaways']:
+            if 'participants' not in self.data['giveaways'][giveaway_id]:
+                self.data['giveaways'][giveaway_id]['participants'] = []
+            
+            self.data['giveaways'][giveaway_id]['participants'].append({
+                'user_id': user_id,
+                'username': username,
+                'timestamp': timestamp,
+                'message_id': message_id
+            })
+            self._save_data()
+    
+    def set_first_comment_start_time(self, giveaway_id: str, start_time: str):
+        """Set the start time for a first comment giveaway"""
+        if giveaway_id in self.data['giveaways']:
+            self.data['giveaways'][giveaway_id]['start_time_iso'] = start_time
+            self._save_data()
+
         """Get a withdrawal request by ID"""
         if 'withdrawals' not in self.data:
             self.data['withdrawals'] = {}
